@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>MapleStory2 Image Divider (Browser)</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", "Helvetica Neue", Arial;
+            margin: 20px;
+            color: #111;
+        }
+
+        h1 {
+            margin: 0 0 8px 0;
+            font-size: 20px;
+        }
+
+        p.lead {
+            margin: 0 0 16px 0;
+            color: #444;
+        }
+
+        .controls {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: flex;
+            flex-direction: column;
+            font-size: 13px;
+        }
+
+        input[type="number"] {
+            width: 100px;
+            padding: 6px;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+        }
+
+        select,
+        button,
+        input[type="file"] {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid #bbb;
+            background: white;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        #dropbox {
+            border: 2px dashed #ddd;
+            padding: 18px;
+            border-radius: 8px;
+            text-align: center;
+            color: #666;
+            margin-bottom: 12px;
+        }
+
+        #results {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .card {
+            width: 240px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+            padding: 8px;
+            background: #fff;
+        }
+
+        .card img {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 4px;
+        }
+
+        .filename {
+            font-size: 12px;
+            color: #333;
+            margin-top: 6px;
+        }
+
+        .dl {
+            margin-top: 6px;
+            display: flex;
+            gap: 8px;
+        }
+
+        small {
+            color: #666;
+            display: block;
+            margin-top: 6px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>MapleStory2 Image Divider — 브라우저 버전</h1>
+    <p class="lead">메이플스토리2 공방 이미지 생성<br>생성된 이미지는 클릭해서 다운로드하세요.</p>
+
+    <div id="dropbox" tabindex="0">
+        이미지 드래그&드롭 또는 클릭해 업로드 가능. (또는 이미지 복사 → 이 창에 붙여넣기)
+        <div style="margin-top:8px;">
+            <input id="fileinput" type="file" accept="image/*">
+        </div>
+    </div>
+
+    <div class="controls">
+        <label>가로 길이
+            <input id="nInput" type="number" min="1" value="2">
+        </label>
+        <label>세로 길이
+            <input id="mInput" type="number" min="1" value="2">
+        </label>
+        <label>블록 종류
+            <select id="modeSelect">
+                <option value="0">디자인 큐브 (옆면)</option>
+                <option value="1">칸막이 큐브</option>
+                <option value="2">디자인 큐브 (윗면)</option>
+                <!-- <option value="3">회전 큐브 (face A)</option>
+                <option value="4">회전 큐브 (face B)</option>
+                <option value="5">회전 큐브 (face C)</option>
+                <option value="6">회전 큐브 (face D)</option> -->
+            </select>
+        </label>
+        <button id="processBtn">실행</button>
+        <button id="clearBtn">결과물 삭제</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        /*
+        Browser implementation of the posted Python script.
+        Key behaviors replicated:
+        - Crop each cell as square: use floor(rawWidth / n), floor(rawHeight / m), then choose min to ensure square.
+        - Modes:
+          0: block -> resize to 230x230, paste at (286,438)
+          1: flat  -> resize to 360x360, paste at (156,410)
+          2: block upper face -> resize 229x229 paste (285,213) + side strips + bottom slice per original logic
+          3..6: rotating block faces -> resize to BLOCKSIZE (227) and paste in horizontal row starting at (57,440)
+        - Filenames: "resultXY.png" with padding similar to original: when n or m >=10, pad indices <10 with leading zero.
+        */
+
+        const fileinput = document.getElementById('fileinput');
+        const dropbox = document.getElementById('dropbox');
+        let loadedImage = null;
+
+        fileinput.addEventListener('change', async (e) => {
+            const f = e.target.files[0];
+            if (!f) return;
+            const dataURL = await fileToDataURL(f);
+            loadImageFromDataURL(dataURL);
+        });
+
+        // drag & drop
+        dropbox.addEventListener('dragover', (e) => { e.preventDefault(); dropbox.style.borderColor = '#aaa'; });
+        dropbox.addEventListener('dragleave', () => { dropbox.style.borderColor = '#ddd'; });
+        dropbox.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropbox.style.borderColor = '#ddd';
+            const f = e.dataTransfer.files && e.dataTransfer.files[0];
+            if (f) {
+                const dataURL = await fileToDataURL(f);
+                loadImageFromDataURL(dataURL);
+            } else {
+                // maybe dataTransfer has image in clipboard
+                const items = e.dataTransfer.items;
+                for (let i = 0; i < items.length; i++) {
+                    const it = items[i];
+                    if (it.type.startsWith('image/')) {
+                        const blob = it.getAsFile();
+                        const dataURL = await fileToDataURL(blob);
+                        loadImageFromDataURL(dataURL);
+                        break;
+                    }
+                }
+            }
+        });
+
+        // paste (clipboard)
+        window.addEventListener('paste', async (e) => {
+            const items = (e.clipboardData || window.clipboardData).items;
+            for (let i = 0; i < items.length; i++) {
+                const it = items[i];
+                if (it.type.indexOf('image') !== -1) {
+                    const blob = it.getAsFile();
+                    const dataURL = await fileToDataURL(blob);
+                    loadImageFromDataURL(dataURL);
+                    return;
+                } else if (it.kind === 'string' && it.type === 'text/plain') {
+                    // ignore
+                }
+            }
+            // also try reading clipboard as image (browser support varies)
+        });
+
+        function fileToDataURL(file) {
+            return new Promise((res, rej) => {
+                const fr = new FileReader();
+                fr.onload = () => res(fr.result);
+                fr.onerror = rej;
+                fr.readAsDataURL(file);
+            });
+        }
+
+        function loadImageFromDataURL(dataURL) {
+            const img = new Image();
+            img.onload = () => {
+                loadedImage = img;
+                dropbox.innerHTML = '<strong>Loaded image:</strong> ' + img.width + '×' + img.height + '<div style="margin-top:8px"><img src="' + dataURL + '" style="max-width:240px; border-radius:6px; box-shadow:0 1px 2px rgba(0,0,0,0.05)"></div><div style="margin-top:6px;color:#666;font-size:12px">이 창에 붙여넣기(Ctrl+V)로도 이미지 추가 가능</div>';
+            };
+            img.onerror = () => { alert('이미지 로드 실패'); };
+            img.src = dataURL;
+        }
+
+        document.getElementById('processBtn').addEventListener('click', () => {
+            if (!loadedImage) return alert('먼저 이미지를 업로드하거나 붙여넣으세요.');
+            const n = parseInt(document.getElementById('nInput').value, 10);
+            const m = parseInt(document.getElementById('mInput').value, 10);
+            const mode = parseInt(document.getElementById('modeSelect').value, 10);
+            if (!n || !m || n < 1 || m < 1) return alert('N과 M은 1 이상의 정수여야 합니다.');
+            processImage(loadedImage, n, m, mode);
+        });
+
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            document.getElementById('results').innerHTML = '';
+        });
+
+        function padIndex(val, maxCount) {
+            // mimic Python code: if maxCount >= 10 and val < 10 -> pad with 0
+            if (maxCount >= 10 && val < 10) return '0' + val;
+            return String(val);
+        }
+
+        function makeCanvas(w, h) {
+            const c = document.createElement('canvas');
+            c.width = w; c.height = h;
+            return c;
+        }
+
+        function dataURLToBlob(dataURL) {
+            const parts = dataURL.split(',');
+            const mime = parts[0].match(/:(.*?);/)[1];
+            const bstr = atob(parts[1]);
+            let n = bstr.length;
+            const u8 = new Uint8Array(n);
+            while (n--) u8[n] = bstr.charCodeAt(n);
+            return new Blob([u8], { type: mime });
+        }
+
+        async function processImage(img, n, m, mode) {
+            const resultsDiv = document.getElementById('results');
+
+            // compute cell size similar to Python2 integer division behavior
+            const rawW = Math.floor(img.width / n) * n; // cropping to multiple
+            const rawH = Math.floor(img.height / m) * m;
+            const cellWInt = Math.floor(img.width / n);
+            const cellHInt = Math.floor(img.height / m);
+            let cellSide = Math.min(cellWInt, cellHInt);
+
+            // Notice Python script computed lost percentage and created a tmp result.png cropping area;
+            // we will crop each cell using cellSide to form square cells.
+            // iterate rows (i) and cols (j) similar to Python logic. We'll use i=row, j=col
+            for (let i = 0; i < m; i++) {
+                for (let j = 0; j < n; j++) {
+                    // compute crop origin
+                    const sx = j * cellSide;
+                    const sy = i * cellSide;
+                    // create temporary canvas for the square crop
+                    const cropCanvas = makeCanvas(cellSide, cellSide);
+                    const cc = cropCanvas.getContext('2d');
+                    cc.drawImage(img, sx, sy, cellSide, cellSide, 0, 0, cellSide, cellSide);
+
+                    // create result canvas 1024x1024
+                    const resultCanvas = makeCanvas(1024, 1024);
+                    const rc = resultCanvas.getContext('2d');
+                    rc.fillStyle = '#ffffff';
+                    rc.fillRect(0, 0, 1024, 1024);
+
+                    if (mode === 0) {
+                        // block: resize 230x230 paste at (286,438)
+                        const tmp = makeCanvas(230, 230);
+                        tmp.getContext('2d').drawImage(cropCanvas, 0, 0, cellSide, cellSide, 0, 0, 230, 230);
+                        rc.drawImage(tmp, 286, 438);
+                    } else if (mode === 1) {
+                        // flat: resize 360x360 paste at (156,410)
+                        const tmp = makeCanvas(360, 360);
+                        tmp.getContext('2d').drawImage(cropCanvas, 0, 0, cellSide, cellSide, 0, 0, 360, 360);
+                        rc.drawImage(tmp, 156, 410);
+                    } else if (mode === 2) {
+                        // block upper face (replicate Python manipulations)
+                        // main: resize 229x229 paste at (285,213)
+                        const main = makeCanvas(229, 229);
+                        main.getContext('2d').drawImage(cropCanvas, 0, 0, cellSide, cellSide, 0, 0, 229, 229);
+                        rc.drawImage(main, 285, 213);
+
+                        // left side: in Python they cropped (0,0,6,228) then many resizes/rotate steps.
+                        // We'll approximate: take left 6px strip (relative to 229), stretch and rotate as needed.
+                        // left strip
+                        const leftStrip = makeCanvas(6, 228);
+                        leftStrip.getContext('2d').drawImage(cropCanvas, 0, 0, Math.max(1, Math.floor(cellSide * 6 / 229)), cellSide, 0, 0, 6, 228);
+                        // expand to 229x229 then rotate 90 and then resize to 229x7 and paste at (55,438)
+                        const lsExp = makeCanvas(229, 229);
+                        lsExp.getContext('2d').drawImage(leftStrip, 0, 0, 6, 228, 0, 0, 229, 229);
+                        // rotate 90deg: draw into a rotated canvas
+                        const lsRot = makeCanvas(229, 229);
+                        const lsr = lsRot.getContext('2d');
+                        lsr.translate(229 / 2, 229 / 2);
+                        lsr.rotate(Math.PI / 2);
+                        lsr.drawImage(lsExp, -229 / 2, -229 / 2);
+                        // now resize to 229x7
+                        const lsFinal = makeCanvas(229, 7);
+                        lsFinal.getContext('2d').drawImage(lsRot, 0, 0, 229, 229, 0, 0, 229, 7);
+                        rc.drawImage(lsFinal, 55, 438);
+
+                        // right side: symmetric
+                        const rightStrip = makeCanvas(6, 228);
+                        rightStrip.getContext('2d').drawImage(cropCanvas, cellSide - Math.max(1, Math.floor(cellSide * 6 / 229)), 0, Math.max(1, Math.floor(cellSide * 6 / 229)), cellSide, 0, 0, 6, 228);
+                        const rsExp = makeCanvas(229, 229);
+                        rsExp.getContext('2d').drawImage(rightStrip, 0, 0, 6, 228, 0, 0, 229, 229);
+                        const rsRot = makeCanvas(229, 229);
+                        const rsr = rsRot.getContext('2d');
+                        rsr.translate(229 / 2, 229 / 2);
+                        rsr.rotate(-Math.PI / 2);
+                        rsr.drawImage(rsExp, -229 / 2, -229 / 2);
+                        const rsFinal = makeCanvas(229, 7);
+                        rsFinal.getContext('2d').drawImage(rsRot, 0, 0, 229, 229, 0, 0, 229, 7);
+                        rc.drawImage(rsFinal, 514, 438);
+
+                        // down side: crop bottom two rows: in Python they did tmpImage = resizeImage.crop((0,226,228,228)) then paste at (285,442)
+                        // We'll take bottom 2 px of the 229x229 main and paste as-is (approx).
+                        const bottom = makeCanvas(229, 3);
+                        bottom.getContext('2d').drawImage(main, 0, 226, 229, 3, 0, 0, 229, 3);
+                        rc.drawImage(bottom, 285, 442);
+
+                    } else if (mode >= 3 && mode <= 6) {
+                        // BLOCKSIZE = 227 used in Python
+                        const BLOCKSIZE = 227;
+                        const tmp = makeCanvas(BLOCKSIZE, BLOCKSIZE);
+                        tmp.getContext('2d').drawImage(cropCanvas, 0, 0, cellSide, cellSide, 0, 0, BLOCKSIZE, BLOCKSIZE);
+                        // compute x:
+                        const faceIndex = mode - 3; // 0..3
+                        const x = 57 + faceIndex * BLOCKSIZE;
+                        rc.drawImage(tmp, x, 440);
+                    }
+
+                    // create filename same logic as Python:
+                    // In Python their function used saveFileName = "result" + padded i + padded j + ".png"
+                    // Their loops are j in range(m) and i in range(n) but they passed swapped; we will name as result{row}{col}.png with padding depending on n and m.
+                    const paddedRow = padIndex(i, m);
+                    const paddedCol = padIndex(j, n);
+                    const filename = 'result' + paddedRow + paddedCol + '.png';
+
+                    // convert canvas to dataURL and make preview + download
+                    const dataURL = resultCanvas.toDataURL('image/png');
+
+                    // create card
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    const preview = document.createElement('img');
+                    preview.src = dataURL;
+                    card.appendChild(preview);
+
+                    const fname = document.createElement('div');
+                    fname.className = 'filename';
+                    fname.textContent = filename;
+                    card.appendChild(fname);
+
+                    const dlWrap = document.createElement('div');
+                    dlWrap.className = 'dl';
+                    const a = document.createElement('a');
+                    a.href = dataURL;
+                    a.download = filename;
+                    a.textContent = '다운로드';
+                    a.style.textDecoration = 'none';
+                    a.style.padding = '6px 8px';
+                    a.style.border = '1px solid #ccc';
+                    a.style.borderRadius = '6px';
+                    a.style.fontSize = '13px';
+                    a.style.color = '#111';
+                    dlWrap.appendChild(a);
+
+                    // open in new tab
+                    const openBtn = document.createElement('a');
+                    openBtn.href = dataURL;
+                    openBtn.target = '_blank';
+                    openBtn.textContent = '새탭 열기';
+                    openBtn.style.padding = '6px 8px';
+                    openBtn.style.border = '1px solid #eee';
+                    openBtn.style.borderRadius = '6px';
+                    openBtn.style.fontSize = '13px';
+                    openBtn.style.textDecoration = 'none';
+                    openBtn.style.color = '#444';
+                    // dlWrap.appendChild(openBtn);
+
+                    card.appendChild(dlWrap);
+
+                    resultsDiv.appendChild(card);
+                    // small delay to keep UI responsive if many images
+                    await new Promise(r => setTimeout(r, 2));
+                }
+            }
+
+            // scroll to results
+            document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+        }
+    </script>
+</body>
+
+</html>
